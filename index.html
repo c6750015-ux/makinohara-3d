@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>牧之原 3D街並み（検証ビルド）</title>
+
+  <!-- Cesium 本体（CDN・無料） -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.136/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.136/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+    }
+    body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; }
+
+    /* 左上の情報カード */
+    #panel {
+      position: absolute; top: 12px; left: 12px; z-index: 10;
+      background: rgba(17, 24, 28, 0.82);
+      color: #f3f5f6;
+      padding: 12px 14px;
+      border-radius: 10px;
+      backdrop-filter: blur(6px);
+      max-width: 220px;
+      line-height: 1.5;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+    }
+    #panel h1 { font-size: 15px; margin: 0 0 4px; font-weight: 700; letter-spacing: .02em; }
+    #panel p  { font-size: 12px; margin: 0; color: #b9c2c7; }
+
+    #recenter {
+      margin-top: 10px;
+      width: 100%;
+      padding: 9px 0;
+      font-size: 13px; font-weight: 600;
+      color: #11181c; background: #5fd0c4;
+      border: none; border-radius: 7px; cursor: pointer;
+    }
+    #recenter:active { background: #4bb8ac; }
+
+    /* クレジット（PLATEAU出典・表記必須） */
+    #credit {
+      position: absolute; bottom: 6px; left: 8px; z-index: 10;
+      font-size: 10px; color: rgba(255,255,255,0.7);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    #credit a { color: rgba(255,255,255,0.85); }
+
+    /* トークン未設定時の警告 */
+    #warn {
+      position: absolute; inset: 0; z-index: 50;
+      display: none;
+      align-items: center; justify-content: center;
+      background: #11181c; color: #f3f5f6; text-align: center; padding: 24px;
+    }
+    #warn div { max-width: 360px; font-size: 14px; line-height: 1.7; }
+    #warn code { background: #222e34; padding: 1px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+
+  <div id="panel">
+    <h1>牧之原 3D街並み</h1>
+    <p>検証ビルド：建物をクルクル回せる土台。ドラッグで回転、ピンチ／ホイールで拡大縮小。</p>
+    <button id="recenter">牧之原に戻る</button>
+  </div>
+
+  <div id="credit">出典：国土交通省 PLATEAU（Cesium Japan 3D Buildings）</div>
+
+  <div id="warn"><div>
+    Cesium ion のアクセストークンが未設定です。<br>
+    このHTMLの <code>YOUR_CESIUM_ION_TOKEN</code> を、<br>
+    取得したトークンに書き換えてください。
+  </div></div>
+
+  <script type="module">
+    // ============================================================
+    // ① ここに Cesium ion の無料トークンを貼る（取得は ion.cesium.com）
+    // ============================================================
+    const TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIxYzBhOTExZS03YzgyLTQwOTktYWViMi04YTUwYmZhMDA2NTYiLCJpZCI6NDUwMTgxLCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3ODI3MDM2MzN9.gsyvmt5FtoiQqqT1kTb4RaC1szPVFjKM8fQP0RjqwcQ";
+
+    // 牧之原市の中心付近（静波・榛原エリア）。検証で別地区を見たくなったら数値だけ差し替え。
+    const MAKINOHARA = {
+      lon: 138.2245,   // 経度
+      lat: 34.7250,    // 緯度（少し南からまちを北向きに見る）
+      height: 1800,    // カメラ高度(m)
+      heading: 10,     // 方位(度)
+      pitch: -30       // 俯角(度) … 斜め見下ろしで建物が立体的に見える
+    };
+
+    // Japan 3D Buildings（全国の建物を1つに束ねたPLATEAU由来タイルセット）
+    // ※ 初回のみ ion アカウントでこのアセットを「Add to my assets」する必要あり
+    const JAPAN_3D_BUILDINGS_ASSET_ID = 2602291;
+
+    if (!TOKEN || TOKEN === "YOUR_CESIUM_ION_TOKEN") {
+      document.getElementById("warn").style.display = "flex";
+    } else {
+      Cesium.Ion.defaultAccessToken = TOKEN;
+
+      const viewer = new Cesium.Viewer("cesiumContainer", {
+        terrain: Cesium.Terrain.fromWorldTerrain(),
+        timeline: false,
+        animation: false,
+        geocoder: false,
+        homeButton: false,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        baseLayerPicker: false,
+        infoBox: false,
+        selectionIndicator: false
+      });
+
+      // 牧之原へ視点を移す関数
+      function flyToMakinohara() {
+        viewer.scene.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(
+            MAKINOHARA.lon, MAKINOHARA.lat, MAKINOHARA.height
+          ),
+          orientation: {
+            heading: Cesium.Math.toRadians(MAKINOHARA.heading),
+            pitch: Cesium.Math.toRadians(MAKINOHARA.pitch),
+            roll: 0
+          }
+        });
+      }
+
+      // 全国の3D建物を読み込み（牧之原は白い箱＝豆腐の状態で出るはず）
+      (async () => {
+        try {
+          const tileset = await Cesium.Cesium3DTileset.fromIonAssetId(JAPAN_3D_BUILDINGS_ASSET_ID);
+          viewer.scene.primitives.add(tileset);
+        } catch (e) {
+          console.error(e);
+          alert("建物データの読み込みに失敗しました。ion アカウントで Japan 3D Buildings を自分のアセットに追加（Add to my assets）したか確認してください。");
+        }
+        flyToMakinohara();
+      })();
+
+      document.getElementById("recenter").addEventListener("click", flyToMakinohara);
+    }
+  </script>
+</body>
+</html>
